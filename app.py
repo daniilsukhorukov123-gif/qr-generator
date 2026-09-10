@@ -49,7 +49,7 @@ if add_logo:
     )
 
 
-def generate_qr_image(url, box_size, logo_img=None, as_svg=False):
+def generate_qr_image(url, box_size, logo_img=None, rotate=False, as_svg=False):
     if as_svg:
         qr = qrcode.QRCode(
             version=None,
@@ -76,10 +76,16 @@ def generate_qr_image(url, box_size, logo_img=None, as_svg=False):
         qr.add_data(url)
         qr.make(fit=True)
 
+        # 1. Генерируем базовый чистый QR-код
         img = qr.make_image(fill_color="black", back_color="white").convert(
             "RGB"
         )
 
+        # 2. Если включен поворот — поворачиваем сам QR-код ДО наложения логотипа
+        if rotate:
+            img = img.rotate(270, expand=True)
+
+        # 3. Накладываем логотип (теперь он всегда будет ровным, даже если QR повернут)
         if logo_img:
             try:
                 logo = Image.open(logo_img).convert("L")
@@ -108,8 +114,6 @@ def generate_qr_image(url, box_size, logo_img=None, as_svg=False):
 
 
 def create_pdf_from_image(img):
-    # Картинка уже поступает сюда повернутой (если стояла галочка), 
-    # поэтому здесь просто упаковываем ее в PDF
     pdf_buffer = io.BytesIO()
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format="PNG")
@@ -155,14 +159,10 @@ if st.button("Сгенерировать и скачать архив", type="pr
                         else svg_data.encode("utf-8"),
                     )
                 else:
-                    # Генерируем базовое изображение для PNG или PDF
+                    # Передаем настройку поворота прямо в генератор
                     img = generate_qr_image(
-                        link, box_size, logo_img=uploaded_logo, as_svg=False
+                        link, box_size, logo_img=uploaded_logo, rotate=rotate_images, as_svg=False
                     )
-
-                    # Если включен поворот, применяем его сразу к растровой картинке
-                    if rotate_images:
-                        img = img.rotate(270, expand=True)
 
                     if output_format == "PNG":
                         img_byte_arr = io.BytesIO()
