@@ -2,7 +2,7 @@ import io
 import zipfile
 import qrcode
 from qrcode.image.svg import SvgPathImage
-from PIL import Image
+from PIL import Image, ImageOps
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import streamlit as st
@@ -39,14 +39,13 @@ st.caption(
 
 st.write("---")
 
-# Чекбокс для включения опции логотипа
 add_logo = st.checkbox("Добавить логотип в центр QR-кода")
 
 uploaded_logo = None
 if add_logo:
     uploaded_logo = st.file_uploader(
-        "Загрузите логотип (квадратный PNG, рекомендуется с прозрачностью)",
-        type=["png", "jpg"],
+        "Загрузите логотип (будет автоматически переведен в Ч/Б с белым полем)",
+        type=["png", "jpg", "jpeg"],
     )
 
 
@@ -83,16 +82,37 @@ def generate_qr_image(url, box_size, logo_img=None, as_svg=False):
 
         if logo_img:
             try:
-                orig_logo = Image.open(logo_img)
+                # Открываем логотип и конвертируем в Ч/Б (L - оттенки серого)
+                logo = Image.open(logo_img).convert("L")
+                
+                # Инвертируем или делаем контрастнее, если нужно, но базово просто переводим в черно-белое
+                # Сделаем жесткий порог (threshold), чтобы логотип был чисто черно-белым без серых полутонов
+                logo = logo.point(lambda p: 0 if p < 140 else 255, '1').convert("RGBA")
+
                 qr_width, qr_height = img.size
-                logo_size = min(qr_width, qr_height) // 4
-                orig_logo.thumbnail((logo_size, logo_size), Image.LANCZOS)
-                x = (qr_width - orig_logo.size[0]) // 2
-                y = (qr_height - orig_logo.size[1]) // 2
-                if orig_logo.mode == "RGBA":
-                    img.paste(orig_logo, (x, y), orig_logo)
-                else:
-                    img.paste(orig_logo, (x, y))
+                logo_max_size = min(qr_width, qr_height) // 4
+
+                # Изменяем размер самого логотипа
+                logo.thumbnail((logo_max_size, logo_max_size), Image.LANCZOS)
+
+                # Создаем белую квадратную подложку (охранное поле) чуть больше самого логотипа
+                padding = 8  # толщина белой рамки вокруг логотипа в пикселях
+                bg_size = (logo.size[0] + padding * 2, logo.size[1] + padding * 2)
+                
+                background = Image.new("RGBA", bg_size, "white")
+                
+                # Вставляем логотип по центру белой подложки
+                bg_x = (bg_size[0] - logo.size[0]) // 2
+                bg_y = (bg_size[1] - logo.size[1]) // 2
+                background.paste(logo, (bg_x, bg_y), logo)
+
+                # Вычисляем координаты для вставки всей композиции (лого + поле) в центр QR
+                pos_x = (qr_width - background.size[0]) // 2
+                pos_y = (qr_height - background.size[1]) // 2
+
+                # Накладываем на QR-код
+                img.paste(background, (pos_x, pos_y), background)
+
             except Exception as e:
                 st.warning(f"Не удалось добавить логотип: {e}")
 
