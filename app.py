@@ -26,7 +26,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     output_format = st.selectbox("Формат файлов", ["PNG", "SVG", "PDF"], index=0)
 with col2:
-    rotate_pdf = st.checkbox("Повернуть PDF на -90°", value=True)
+    rotate_images = st.checkbox("Повернуть изображения на -90°", value=True)
 with col3:
     box_size = st.slider(
         "Размер точки (box_size)", min_value=5, max_value=20, value=10
@@ -82,35 +82,23 @@ def generate_qr_image(url, box_size, logo_img=None, as_svg=False):
 
         if logo_img:
             try:
-                # Открываем логотип и конвертируем в Ч/Б (L - оттенки серого)
                 logo = Image.open(logo_img).convert("L")
-                
-                # Инвертируем или делаем контрастнее, если нужно, но базово просто переводим в черно-белое
-                # Сделаем жесткий порог (threshold), чтобы логотип был чисто черно-белым без серых полутонов
                 logo = logo.point(lambda p: 0 if p < 140 else 255, '1').convert("RGBA")
 
                 qr_width, qr_height = img.size
                 logo_max_size = min(qr_width, qr_height) // 4
-
-                # Изменяем размер самого логотипа
                 logo.thumbnail((logo_max_size, logo_max_size), Image.LANCZOS)
 
-                # Создаем белую квадратную подложку (охранное поле) чуть больше самого логотипа
-                padding = 8  # толщина белой рамки вокруг логотипа в пикселях
+                padding = 8
                 bg_size = (logo.size[0] + padding * 2, logo.size[1] + padding * 2)
-                
                 background = Image.new("RGBA", bg_size, "white")
                 
-                # Вставляем логотип по центру белой подложки
                 bg_x = (bg_size[0] - logo.size[0]) // 2
                 bg_y = (bg_size[1] - logo.size[1]) // 2
                 background.paste(logo, (bg_x, bg_y), logo)
 
-                # Вычисляем координаты для вставки всей композиции (лого + поле) в центр QR
                 pos_x = (qr_width - background.size[0]) // 2
                 pos_y = (qr_height - background.size[1]) // 2
-
-                # Накладываем на QR-код
                 img.paste(background, (pos_x, pos_y), background)
 
             except Exception as e:
@@ -119,10 +107,9 @@ def generate_qr_image(url, box_size, logo_img=None, as_svg=False):
         return img
 
 
-def create_pdf_from_image(img, rotate=True):
-    if rotate:
-        img = img.rotate(270, expand=True)
-
+def create_pdf_from_image(img):
+    # Картинка уже поступает сюда повернутой (если стояла галочка), 
+    # поэтому здесь просто упаковываем ее в PDF
     pdf_buffer = io.BytesIO()
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format="PNG")
@@ -167,19 +154,23 @@ if st.button("Сгенерировать и скачать архив", type="pr
                         if isinstance(svg_data, bytes)
                         else svg_data.encode("utf-8"),
                     )
-                elif output_format == "PNG":
+                else:
+                    # Генерируем базовое изображение для PNG или PDF
                     img = generate_qr_image(
                         link, box_size, logo_img=uploaded_logo, as_svg=False
                     )
-                    img_byte_arr = io.BytesIO()
-                    img.save(img_byte_arr, format="PNG")
-                    zip_file.writestr(f"{file_name}.png", img_byte_arr.getvalue())
-                elif output_format == "PDF":
-                    img = generate_qr_image(
-                        link, box_size, logo_img=uploaded_logo, as_svg=False
-                    )
-                    pdf_data = create_pdf_from_image(img, rotate=rotate_pdf)
-                    zip_file.writestr(f"{file_name}.pdf", pdf_data)
+
+                    # Если включен поворот, применяем его сразу к растровой картинке
+                    if rotate_images:
+                        img = img.rotate(270, expand=True)
+
+                    if output_format == "PNG":
+                        img_byte_arr = io.BytesIO()
+                        img.save(img_byte_arr, format="PNG")
+                        zip_file.writestr(f"{file_name}.png", img_byte_arr.getvalue())
+                    elif output_format == "PDF":
+                        pdf_data = create_pdf_from_image(img)
+                        zip_file.writestr(f"{file_name}.pdf", pdf_data)
 
         zip_buffer.seek(0)
 
