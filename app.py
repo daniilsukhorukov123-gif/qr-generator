@@ -1,6 +1,7 @@
 import io
 import zipfile
 import qrcode
+from qrcode.image.svg import SvgPathImage
 from PIL import Image
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -12,58 +13,104 @@ st.set_page_config(
 
 st.title("🔲 Генератор пачки QR-кодов")
 st.write(
-    "Вставьте ссылки (по одной на строку), выберите формат и скачайте готовый архив."
+    "Вставьте ссылки, настройте параметры и скачайте готовый архив в нужном формате."
 )
 
-# Инпуты для пользователя
 links_input = st.text_area(
     "Список ссылок (каждая с новой строки):",
     placeholder="https://example.com/1\nhttps://example.com/2",
     height=150,
 )
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
-    output_format = st.selectbox("Формат файлов", ["PNG", "PDF"], index=0)
+    output_format = st.selectbox("Формат файлов", ["PNG", "SVG", "PDF"], index=0)
 with col2:
-    # Поворот для PDF, если стандартные просмотрщики открывают их боком
     rotate_pdf = st.checkbox("Повернуть PDF на -90°", value=True)
-
-box_size = st.slider("Размер / Качество QR", min_value=5, max_value=20, value=10)
-
-
-def generate_qr_image(url, box_size):
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=box_size,
-        border=4,
+with col3:
+    box_size = st.slider(
+        "Размер точки (box_size)", min_value=5, max_value=20, value=10
     )
-    qr.add_data(url)
-    qr.make(fit=True)
-    return qr.make_image(fill_color="black", back_color="white").convert("RGB")
+
+estimated_px = 37 * box_size
+st.caption(
+    f"💡 При таком значении (`{box_size}`) итоговый размер растрового QR-кода составит примерно **{estimated_px} × {estimated_px} px**. Для печати на полиграфии рекомендуем **SVG**."
+)
+
+st.write("---")
+
+# Чекбокс для включения опции логотипа
+add_logo = st.checkbox("Добавить логотип в центр QR-кода")
+
+uploaded_logo = None
+if add_logo:
+    uploaded_logo = st.file_uploader(
+        "Загрузите логотип (квадратный PNG, рекомендуется с прозрачностью)",
+        type=["png", "jpg"],
+    )
+
+
+def generate_qr_image(url, box_size, logo_img=None, as_svg=False):
+    if as_svg:
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=box_size,
+            border=4,
+        )
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(image_factory=SvgPathImage)
+        return img.to_string(encoding="utf-8")
+    else:
+        error_corr = (
+            qrcode.constants.ERROR_CORRECT_H
+            if logo_img
+            else qrcode.constants.ERROR_CORRECT_M
+        )
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=error_corr,
+            box_size=box_size,
+            border=4,
+        )
+        qr.add_data(url)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="black", back_color="white").convert(
+            "RGB"
+        )
+
+        if logo_img:
+            try:
+                orig_logo = Image.open(logo_img)
+                qr_width, qr_height = img.size
+                logo_size = min(qr_width, qr_height) // 4
+                orig_logo.thumbnail((logo_size, logo_size), Image.LANCZOS)
+                x = (qr_width - orig_logo.size[0]) // 2
+                y = (qr_height - orig_logo.size[1]) // 2
+                if orig_logo.mode == "RGBA":
+                    img.paste(orig_logo, (x, y), orig_logo)
+                else:
+                    img.paste(orig_logo, (x, y))
+            except Exception as e:
+                st.warning(f"Не удалось добавить логотип: {e}")
+
+        return img
 
 
 def create_pdf_from_image(img, rotate=True):
+    if rotate:
+        img = img.rotate(270, expand=True)
+
     pdf_buffer = io.BytesIO()
-    # Сохраняем во временный буфер как картинку
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format="PNG")
     img_byte_arr.seek(0)
 
-    # Создаем PDF через ReportLab нужного размера под картинку
     width, height = img.size
     c = canvas.Canvas(pdf_buffer, pagesize=(width, height))
-
-    if rotate:
-        # Поворот на -90 градусов против часовой стрелки
-        c.translate(0, height)
-        c.rotate(-90)
-        c.drawImage(
-            img_byte_arr, 0, 0, width=height, height=width
-        , mask='auto')
-    else:
-        c.drawImage(img_byte_arr, 0, 0, width=width, height=height)
+    c.drawImage(img_byte_arr, 0, 0, width=width, height=height)
 
     c.showPage()
     c.save()
@@ -83,7 +130,6 @@ if st.button("Сгенерировать и скачать архив", type="pr
             zip_buffer, "w", zipfile.ZIP_DEFLATED
         ) as zip_file:
             for i, link in enumerate(links, 1):
-                # Чистим имя файла из ссылки для безопасности
                 safe_name = (
                     link.replace("https://", "")
                     .replace("http://", "")
@@ -91,21 +137,33 @@ if st.button("Сгенерировать и скачать архив", type="pr
                 )
                 file_name = f"qr_{i:02d}_{safe_name}"
 
-                img = generate_qr_image(link, box_size)
-
-                if output_format == "PNG":
+                if output_format == "SVG":
+                    svg_data = generate_qr_image(
+                        link, box_size, as_svg=True
+                    )
+                    zip_file.writestr(
+                        f"{file_name}.svg",
+                        svg_data
+                        if isinstance(svg_data, bytes)
+                        else svg_data.encode("utf-8"),
+                    )
+                elif output_format == "PNG":
+                    img = generate_qr_image(
+                        link, box_size, logo_img=uploaded_logo, as_svg=False
+                    )
                     img_byte_arr = io.BytesIO()
                     img.save(img_byte_arr, format="PNG")
                     zip_file.writestr(f"{file_name}.png", img_byte_arr.getvalue())
                 elif output_format == "PDF":
+                    img = generate_qr_image(
+                        link, box_size, logo_img=uploaded_logo, as_svg=False
+                    )
                     pdf_data = create_pdf_from_image(img, rotate=rotate_pdf)
                     zip_file.writestr(f"{file_name}.pdf", pdf_data)
 
         zip_buffer.seek(0)
 
         st.success(f"Готово! Обработано ссылок: {len(links)}")
-        st.download_data = zip_buffer.getvalue()
-
         st.download_button(
             label="📦 Скачать ZIP с QR-кодами",
             data=zip_buffer,
