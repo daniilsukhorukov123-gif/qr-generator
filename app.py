@@ -13,10 +13,9 @@ st.set_page_config(
 
 st.title("🔲 Профессиональный генератор и пачка QR-кодов")
 st.write(
-    "Настройте стиль, углы, логотип, проверьте превью и скачайте готовые QR-коды."
+    "Настройте стиль, углы, загрузите логотип, проверьте превью в реальном времени и скачайте готовые QR-коды."
 )
 
-# Две колонки: слева настройки и ссылки, справа — интерактивный превью-блок
 col_main, col_preview = st.columns([1.6, 1])
 
 with col_main:
@@ -29,13 +28,12 @@ with col_main:
 
     st.markdown("### 🎨 Настройка стиля и дизайна")
 
-    # Стили углов и точек (как в референсе)
     col_s1, col_s2 = st.columns(2)
     with col_s1:
         corner_style = st.selectbox(
             "Стиль внешних рамок углов (Finder Pattern)",
             ["Классический квадрат", "Круглые рамки", "Закругленные рамки"],
-            index=1,  # По умолчанию как на скрине (круглые)
+            index=1,
         )
     with col_s2:
         dot_style = st.selectbox(
@@ -56,53 +54,22 @@ with col_main:
 
     st.markdown("---")
     st.markdown("### 🖼️ Логотип")
-    add_logo = st.checkbox("Добавить логотип в центр QR-кода", value=True)
+    add_logo = st.checkbox("Добавить свой логотип в центр QR-кода")
 
-    logo_choice = "Сбер QR"
     uploaded_logo = None
-
     if add_logo:
-        logo_choice = st.radio(
-            "Выберите логотип:",
-            ["Сбер QR (фирменный)", "Загрузить свой логотип"],
-            horizontal=True,
+        uploaded_logo = st.file_uploader(
+            "Загрузите файл логотипа (PNG, JPG)", type=["png", "jpg", "jpeg"]
         )
-        if logo_choice == "Загрузить свой логотип":
-            uploaded_logo = st.file_uploader(
-                "Загрузите файл логотипа (PNG, JPG)", type=["png", "jpg", "jpeg"]
-            )
-
-
-def create_sber_logo_image():
-    """Генерирует фирменный логотип Сбера (окружность с галочкой)"""
-    size = 200
-    img = Image.new("RGBA", (size, size), (255, 255, 255, 0))
-    draw = ImageDraw.Draw(img)
-
-    margin = 15
-    lineWidth = 14
-    draw.ellipse(
-        [margin, margin, size - margin, size - margin],
-        outline="black",
-        width=lineWidth,
-    )
-
-    check_points = [
-        (int(size * 0.30), int(size * 0.53)),
-        (int(size * 0.45), int(size * 0.68)),
-        (int(size * 0.72), int(size * 0.36)),
-    ]
-    draw.line(check_points, fill="black", width=lineWidth, joint="curve")
-    return img
 
 
 def draw_styled_qr(
-    url, box_size, corner_type, dot_type, logo_mode, custom_logo, rotate
+    url, box_size, corner_type, dot_type, custom_logo, rotate
 ):
-    # Используем высокий уровень коррекции ошибок при наличии логотипа
+    # Высокий уровень коррекции ошибок необходим, если в центре есть логотип
     error_corr = (
         qrcode.constants.ERROR_CORRECT_H
-        if logo_mode
+        if custom_logo
         else qrcode.constants.ERROR_CORRECT_M
     )
     qr = qrcode.QRCode(
@@ -114,32 +81,23 @@ def draw_styled_qr(
     qr.add_data(url)
     qr.make(fit=True)
 
-    # Создаем базовый QR на белом фоне
     img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
     width, height = img.size
 
-    # Кастомизация формы точек через обработку пикселей (простая имитация стилей для примера)
-    # Поворачиваем QR-код ДО вставки логотипа (чтобы логотип оставался ровным)
+    # Поворот QR-кода ДО вставки логотипа
     if rotate:
         img = img.rotate(270, expand=True)
         width, height = img.size
 
-    # Накладываем логотип с белым охранным полем
-    if logo_mode:
+    # Наложение пользовательского логотипа с белым охранным полем
+    if custom_logo:
         try:
-            if logo_mode == "Сбер QR (фирменный)":
-                logo = create_sber_logo_image()
-            else:
-                if custom_logo:
-                    logo = Image.open(custom_logo).convert("L")
-                    logo = logo.point(lambda p: 0 if p < 140 else 255, "1").convert("RGBA")
-                else:
-                    logo = create_sber_logo_image()
+            logo = Image.open(custom_logo).convert("L")
+            logo = logo.point(lambda p: 0 if p < 140 else 255, "1").convert("RGBA")
 
             logo_max_size = min(width, height) // 4
             logo.thumbnail((logo_max_size, logo_max_size), Image.LANCZOS)
 
-            # Белое охранное поле
             padding = 10
             bg_size = (logo.size[0] + padding * 2, logo.size[1] + padding * 2)
             background = Image.new("RGBA", bg_size, "white")
@@ -158,32 +116,31 @@ def draw_styled_qr(
     return img
 
 
-# Правая колонка — Живой предпросмотр
+# Правая колонка — Динамический предпросмотр (реагирует на любые изменения в настройках)
 with col_preview:
-    st.markdown("### 📱 Предпросмотр")
+    st.markdown("### 📱 Живое превью")
     sample_url = (
         links_input.split("\n")[0].strip()
         if links_input
         else "https://get-qr.com/q_H6zb"
     )
 
-    active_logo = logo_choice if add_logo else None
     preview_img = draw_styled_qr(
         sample_url,
-        box_size=8,  # фиксированный размер для превью
+        box_size=8,
         corner_type=corner_style,
         dot_type=dot_style,
-        logo_mode=active_logo,
         custom_logo=uploaded_logo,
         rotate=rotate_images,
     )
     st.image(
         preview_img,
-        caption="Результат для первой ссылки",
+        caption="Обновляется автоматически при изменении настроек",
         use_container_width=True,
     )
 
 st.write("---")
+
 
 def create_pdf_from_image(img):
     pdf_buffer = io.BytesIO()
@@ -235,14 +192,13 @@ if st.button("🚀 Сгенерировать и скачать архив со 
                         else svg_data.encode("utf-8"),
                     )
                 else:
-                    active_logo_mode = logo_choice if add_logo else None
+                    active_logo = uploaded_logo if add_logo else None
                     img = draw_styled_qr(
                         link,
                         box_size,
                         corner_type=corner_style,
                         dot_type=dot_style,
-                        logo_mode=active_logo_mode,
-                        custom_logo=uploaded_logo,
+                        custom_logo=active_logo,
                         rotate=rotate_images,
                     )
 
