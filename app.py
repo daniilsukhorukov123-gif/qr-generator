@@ -2,7 +2,7 @@ import io
 import zipfile
 import qrcode
 from qrcode.image.svg import SvgPathImage
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import streamlit as st
@@ -41,15 +41,50 @@ st.write("---")
 
 add_logo = st.checkbox("Добавить логотип в центр QR-кода")
 
+logo_source = "Сбер QR"
 uploaded_logo = None
+
 if add_logo:
-    uploaded_logo = st.file_uploader(
-        "Загрузите логотип (будет автоматически переведен в Ч/Б с белым полем)",
-        type=["png", "jpg", "jpeg"],
+    logo_source = st.radio(
+        "Источник логотипа:", ["Сбер QR", "Загрузить свой логотип"]
+    )
+    if logo_source == "Загрузить свой логотип":
+        uploaded_logo = st.file_uploader(
+            "Загрузите файл логотипа (PNG, JPG)", type=["png", "jpg", "jpeg"]
+        )
+
+
+def create_sber_logo_image():
+    """Генерирует векторноподобный фирменный логотип Сбера (окружность с галочкой)"""
+    # Создаем чистый холст с запасом
+    size = 200
+    img = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Рисуем фирменный круг (контур)
+    margin = 15
+    lineWidth = 14
+    draw.ellipse(
+        [margin, margin, size - margin, size - margin],
+        outline="black",
+        width=lineWidth,
     )
 
+    # Рисуем галочку внутри (координаты линий галочки)
+    # Точки: старт слева-снизу, изгиб по центру, подъем наверх-вправо
+    check_points = [
+        (int(size * 0.30), int(size * 0.53)),
+        (int(size * 0.45), int(size * 0.68)),
+        (int(size * 0.72), int(size * 0.36)),
+    ]
+    draw.line(check_points, fill="black", width=lineWidth, joint="curve")
 
-def generate_qr_image(url, box_size, logo_img=None, rotate=False, as_svg=False):
+    return img
+
+
+def generate_qr_image(
+    url, box_size, logo_mode=None, custom_logo=None, rotate=False, as_svg=False
+):
     if as_svg:
         qr = qrcode.QRCode(
             version=None,
@@ -62,9 +97,10 @@ def generate_qr_image(url, box_size, logo_img=None, rotate=False, as_svg=False):
         img = qr.make_image(image_factory=SvgPathImage)
         return img.to_string(encoding="utf-8")
     else:
+        # Для логотипов используем высокий уровень коррекции ошибок (H)
         error_corr = (
             qrcode.constants.ERROR_CORRECT_H
-            if logo_img
+            if logo_mode
             else qrcode.constants.ERROR_CORRECT_M
         )
         qr = qrcode.QRCode(
@@ -85,20 +121,29 @@ def generate_qr_image(url, box_size, logo_img=None, rotate=False, as_svg=False):
         if rotate:
             img = img.rotate(270, expand=True)
 
-        # 3. Накладываем логотип (теперь он всегда будет ровным, даже если QR повернут)
-        if logo_img:
+        # 3. Накладываем логотип (Сбер или пользовательский)
+        if logo_mode:
             try:
-                logo = Image.open(logo_img).convert("L")
-                logo = logo.point(lambda p: 0 if p < 140 else 255, '1').convert("RGBA")
+                if logo_mode == "Сбер QR":
+                    logo = create_sber_logo_image()
+                else:
+                    logo = Image.open(custom_logo).convert("L")
+                    logo = logo.point(
+                        lambda p: 0 if p < 140 else 255, "1"
+                    ).convert("RGBA")
 
                 qr_width, qr_height = img.size
                 logo_max_size = min(qr_width, qr_height) // 4
                 logo.thumbnail((logo_max_size, logo_max_size), Image.LANCZOS)
 
-                padding = 8
-                bg_size = (logo.size[0] + padding * 2, logo.size[1] + padding * 2)
+                # Создаем белое охранное поле вокруг логотипа
+                padding = 10
+                bg_size = (
+                    logo.size[0] + padding * 2,
+                    logo.size[1] + padding * 2,
+                )
                 background = Image.new("RGBA", bg_size, "white")
-                
+
                 bg_x = (bg_size[0] - logo.size[0]) // 2
                 bg_y = (bg_size[1] - logo.size[1]) // 2
                 background.paste(logo, (bg_x, bg_y), logo)
@@ -159,9 +204,14 @@ if st.button("Сгенерировать и скачать архив", type="pr
                         else svg_data.encode("utf-8"),
                     )
                 else:
-                    # Передаем настройку поворота прямо в генератор
+                    active_logo_mode = logo_source if add_logo else None
                     img = generate_qr_image(
-                        link, box_size, logo_img=uploaded_logo, rotate=rotate_images, as_svg=False
+                        link,
+                        box_size,
+                        logo_mode=active_logo_mode,
+                        custom_logo=uploaded_logo,
+                        rotate=rotate_images,
+                        as_svg=False,
                     )
 
                     if output_format == "PNG":
